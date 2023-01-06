@@ -218,7 +218,8 @@ class Camera
     // Create capture callback.
     captureTimeouts = new CaptureTimeoutsWrapper(3000, 3000);
     captureProps = new CameraCaptureProperties();
-    cameraCaptureCallback = CameraCaptureCallback.create(this, captureTimeouts, captureProps);
+    cameraCaptureCallback = CameraCaptureCallback.create(
+        this, captureTimeouts, captureProps, cameraFeatures);
 
     startBackgroundThread();
   }
@@ -561,8 +562,8 @@ class Camera
 
     final AutoFocusFeature autoFocusFeature = cameraFeatures.getAutoFocus();
     final boolean isAutoFocusSupported = autoFocusFeature.checkIsSupported();
-    if (isAutoFocusSupported && autoFocusFeature.getValue() == FocusMode.auto) {
-      runPictureAutoFocus();
+    if (isAutoFocusSupported) {
+      runPictureAutoFocus(autoFocusFeature.getValue());
     } else {
       runPrecaptureSequence();
     }
@@ -575,18 +576,6 @@ class Camera
   private void runPrecaptureSequence() {
     Log.i(TAG, "runPrecaptureSequence");
     try {
-      // First set precapture state to idle or else it can hang in STATE_WAITING_PRECAPTURE_START.
-      previewRequestBuilder.set(
-          CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
-          CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE);
-      captureSession.capture(
-          previewRequestBuilder.build(), cameraCaptureCallback, backgroundHandler);
-
-      // Repeating request to refresh preview session.
-      refreshPreviewCaptureSession(
-          null,
-          (code, message) -> dartMessenger.error(flutterResult, "cameraAccess", message, null));
-
       // Start precapture.
       cameraCaptureCallback.setCameraState(CameraState.STATE_WAITING_PRECAPTURE_START);
 
@@ -649,7 +638,7 @@ class Camera
               @NonNull CameraCaptureSession session,
               @NonNull CaptureRequest request,
               @NonNull TotalCaptureResult result) {
-            unlockAutoFocus();
+            unlockFocus();
           }
         };
 
@@ -692,17 +681,19 @@ class Camera
   }
 
   /** Start capturing a picture, doing autofocus first. */
-  private void runPictureAutoFocus() {
+  private void runPictureAutoFocus(FocusMode focusMode) {
     Log.i(TAG, "runPictureAutoFocus");
-
     cameraCaptureCallback.setCameraState(CameraState.STATE_WAITING_FOCUS);
-    lockAutoFocus();
+    // We only need to trigger auto-focus if the focus mode is locked. In auto focus mode the focusing is continuous.
+    if (focusMode == FocusMode.locked) {
+      lockFocus();
+    }
   }
 
-  private void lockAutoFocus() {
-    Log.i(TAG, "lockAutoFocus");
+  private void lockFocus() {
+    Log.i(TAG, "lockFocus");
     if (captureSession == null) {
-      Log.i(TAG, "[unlockAutoFocus] captureSession null, returning");
+      Log.i(TAG, "[lockFocus] captureSession null, returning");
       return;
     }
 
@@ -718,22 +709,23 @@ class Camera
   }
 
   /** Cancel and reset auto focus state and refresh the preview session. */
-  private void unlockAutoFocus() {
-    Log.i(TAG, "unlockAutoFocus");
+  private void unlockFocus() {
+    Log.i(TAG, "unlockFocus");
     if (captureSession == null) {
       Log.i(TAG, "[unlockAutoFocus] captureSession null, returning");
       return;
     }
+
+    final AutoFocusFeature autoFocusFeature = cameraFeatures.getAutoFocus();
+    final boolean isAutoFocusSupported = autoFocusFeature.checkIsSupported();
+    if (!isAutoFocusSupported || autoFocusFeature.getValue() == FocusMode.auto) {
+      return;
+    }
+
     try {
       // Cancel existing AF state.
       previewRequestBuilder.set(
           CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
-      captureSession.capture(previewRequestBuilder.build(), null, backgroundHandler);
-
-      // Set AF state to idle again.
-      previewRequestBuilder.set(
-          CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
-
       captureSession.capture(previewRequestBuilder.build(), null, backgroundHandler);
     } catch (CameraAccessException e) {
       dartMessenger.sendCameraErrorEvent(e.getMessage());
@@ -923,7 +915,7 @@ class Camera
             Log.i(TAG, "[unlockAutoFocus] captureSession null, returning");
             return;
           }
-          lockAutoFocus();
+          lockFocus();
 
           // Set AF state to idle again.
           previewRequestBuilder.set(
@@ -942,7 +934,7 @@ class Camera
           break;
         case auto:
           // Cancel current AF trigger and set AF to idle again.
-          unlockAutoFocus();
+          unlockFocus();
           break;
       }
     }
