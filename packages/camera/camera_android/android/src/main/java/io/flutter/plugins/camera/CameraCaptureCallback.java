@@ -11,6 +11,9 @@ import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
 import android.util.Log;
 import androidx.annotation.NonNull;
+import io.flutter.plugins.camera.features.CameraFeatures;
+import io.flutter.plugins.camera.features.autofocus.AutoFocusFeature;
+import io.flutter.plugins.camera.features.autofocus.FocusMode;
 import io.flutter.plugins.camera.types.CameraCaptureProperties;
 import io.flutter.plugins.camera.types.CaptureTimeoutsWrapper;
 
@@ -24,15 +27,18 @@ class CameraCaptureCallback extends CaptureCallback {
   private CameraState cameraState;
   private final CaptureTimeoutsWrapper captureTimeouts;
   private final CameraCaptureProperties captureProps;
+  private final CameraFeatures cameraFeatures;
 
   private CameraCaptureCallback(
       @NonNull CameraCaptureStateListener cameraStateListener,
       @NonNull CaptureTimeoutsWrapper captureTimeouts,
-      @NonNull CameraCaptureProperties captureProps) {
+      @NonNull CameraCaptureProperties captureProps,
+      @NonNull CameraFeatures cameraFeatures) {
     cameraState = CameraState.STATE_PREVIEW;
     this.cameraStateListener = cameraStateListener;
     this.captureTimeouts = captureTimeouts;
     this.captureProps = captureProps;
+    this.cameraFeatures = cameraFeatures;
   }
 
   /**
@@ -46,8 +52,9 @@ class CameraCaptureCallback extends CaptureCallback {
   public static CameraCaptureCallback create(
       @NonNull CameraCaptureStateListener cameraStateListener,
       @NonNull CaptureTimeoutsWrapper captureTimeouts,
-      @NonNull CameraCaptureProperties captureProps) {
-    return new CameraCaptureCallback(cameraStateListener, captureTimeouts, captureProps);
+      @NonNull CameraCaptureProperties captureProps,
+      @NonNull CameraFeatures cameraFeatures) {
+    return new CameraCaptureCallback(cameraStateListener, captureTimeouts, captureProps, cameraFeatures);
   }
 
   /**
@@ -101,10 +108,15 @@ class CameraCaptureCallback extends CaptureCallback {
         }
       case STATE_WAITING_FOCUS:
         {
+          final AutoFocusFeature autoFocusFeature = cameraFeatures.getAutoFocus();
           if (afState == null) {
             return;
-          } else if (afState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
-              || afState == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED) {
+          } else if (autoFocusFeature.getValue() == FocusMode.auto
+              && afState == CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED) {
+            handleWaitingFocusState(aeState);
+          } else if (autoFocusFeature.getValue() == FocusMode.locked
+              && (afState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
+              || afState == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED)) {
             handleWaitingFocusState(aeState);
           } else if (captureTimeouts.getPreCaptureFocusing().getIsExpired()) {
             Log.w(TAG, "Focus timeout, moving on with capture");
